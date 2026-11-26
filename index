@@ -1,0 +1,806 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>即時會議記錄器</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* 版面：上方工具列 + 左逐字稿 / 右摘要，窄螢幕改單欄 */
+:root{
+  --bg:#f3f5f4; --panel:#ffffff; --ink:#1c2523; --muted:#5e6b68; --line:#d9e0de;
+  --accent:#1f6f62; --accent-ink:#ffffff; --accent-soft:#e2efec;
+  --rec:#c8382d; --rec-soft:#fbe7e5; --warn:#8a5a00; --warn-soft:#fbf0d9;
+  --font-body:"Noto Sans TC","Microsoft JhengHei","PingFang TC",system-ui,sans-serif;
+  --font-mono:"IBM Plex Mono",Consolas,"Courier New",monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#131917; --panel:#1b2321; --ink:#e4ebe9; --muted:#9aa8a4; --line:#2e3a37;
+  --accent:#4fb3a1; --accent-ink:#0d1513; --accent-soft:#1f3330;
+  --rec:#ff6b5e; --rec-soft:#3a1f1c; --warn:#f0c060; --warn-soft:#3a3018;
+  color-scheme:dark;
+}}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font:15px/1.65 var(--font-body)}
+button,input,select,textarea{font:inherit;color:inherit}
+.wrap{max-width:1280px;margin:0 auto;padding:20px 16px 40px;display:flex;flex-direction:column;gap:16px}
+
+header.top{display:flex;flex-wrap:wrap;gap:12px 20px;align-items:flex-end;justify-content:space-between}
+.meta{display:flex;flex-wrap:wrap;gap:10px;flex:1 1 520px;min-width:0}
+.field{display:flex;flex-direction:column;gap:4px;min-width:0}
+.field label{font-size:12px;color:var(--muted);letter-spacing:.06em}
+.field input,.field select{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:7px 10px;min-width:0}
+#title{font-size:18px;font-weight:700;width:min(360px,100%)}
+#attendees{width:min(280px,100%)}
+input:focus-visible,select:focus-visible,textarea:focus-visible,button:focus-visible,[contenteditable]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+.recbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.clock{font:500 26px/1 var(--font-mono);font-variant-numeric:tabular-nums;min-width:110px}
+.state{display:inline-flex;align-items:center;gap:6px;font-size:13px;padding:3px 10px;border-radius:99px;background:var(--accent-soft);color:var(--accent)}
+.state.rec{background:var(--rec-soft);color:var(--rec)}
+.state .dot{width:8px;height:8px;border-radius:50%;background:currentColor}
+.state.rec .dot{animation:pulse 1.2s infinite}
+@keyframes pulse{50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){.state.rec .dot{animation:none}}
+.meter{flex:1 1 140px;height:8px;border-radius:4px;background:var(--line);overflow:hidden;min-width:100px}
+.meter i{display:block;height:100%;width:0;background:var(--accent);transition:width .08s}
+.spacer{flex:1 1 0}
+
+.btn{border:1px solid var(--line);background:var(--panel);border-radius:7px;padding:8px 14px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.btn:hover:not(:disabled){border-color:var(--accent)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:500}
+.btn.danger{background:var(--rec);color:#fff;border-color:var(--rec);font-weight:500}
+.btn.small{padding:5px 10px;font-size:13px}
+
+.notice{border-radius:8px;padding:10px 14px;font-size:14px;background:var(--warn-soft);color:var(--warn)}
+
+.cols{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:16px;align-items:start}
+@media (max-width:900px){.cols{grid-template-columns:minmax(0,1fr)}}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;display:flex;flex-direction:column;min-width:0}
+.panel-head{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid var(--line)}
+.panel-head h2{margin:0;font-size:15px;letter-spacing:.04em}
+.panel-head .tools{display:flex;flex-wrap:wrap;gap:6px}
+.count{font-size:12px;color:var(--muted);font-weight:400;margin-left:6px}
+
+#transcript{padding:8px 0;height:58vh;min-height:320px;overflow-y:auto}
+.seg{display:grid;grid-template-columns:64px minmax(0,1fr) auto;gap:10px;padding:5px 14px;align-items:start}
+.seg:hover{background:var(--accent-soft)}
+.seg time{font:12px/2 var(--font-mono);color:var(--muted);font-variant-numeric:tabular-nums}
+.seg .txt{outline:none;word-break:break-word;border-radius:4px;padding:1px 4px;margin:0 -4px}
+.seg .del{opacity:0;border:0;background:none;color:var(--muted);cursor:pointer;font-size:13px;padding:2px 6px}
+.seg:hover .del,.seg .del:focus-visible{opacity:1}
+.txstatus{margin:10px 14px 0;padding:10px 12px;border-radius:8px;background:var(--accent-soft);color:var(--accent);font-size:14px;display:flex;gap:10px;align-items:center}
+.txstatus.err{background:var(--rec-soft);color:var(--rec)}
+.spin{width:14px;height:14px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:spin .8s linear infinite;flex:none}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.spin{animation:none}}
+.interim{padding:5px 14px 5px 88px;color:var(--muted);font-style:italic}
+.empty{padding:40px 24px;color:var(--muted);text-align:center;font-size:14px}
+.empty strong{display:block;color:var(--ink);font-size:16px;margin-bottom:6px}
+
+.sum-body{padding:14px;display:flex;flex-direction:column;gap:12px}
+.apirow{display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end}
+.apirow .field{flex:1 1 180px}
+.apirow input,.apirow select{width:100%}
+details.cfg{border:1px solid var(--line);border-radius:8px;padding:8px 12px;font-size:14px}
+details.cfg summary{cursor:pointer;color:var(--muted)}
+details.cfg[open] summary{margin-bottom:10px}
+.hint{font-size:12px;color:var(--muted);margin:0}
+#summaryView{min-height:260px;max-height:52vh;overflow-y:auto;border:1px solid var(--line);border-radius:8px;padding:14px 16px;background:var(--bg)}
+#summaryView h1,#summaryView h2,#summaryView h3{font-size:16px;margin:14px 0 6px;text-wrap:balance}
+#summaryView h1:first-child,#summaryView h2:first-child,#summaryView h3:first-child{margin-top:0}
+#summaryView ul{margin:4px 0;padding-left:22px}
+#summaryView p{margin:6px 0}
+#summaryEdit{width:100%;min-height:260px;max-height:52vh;border:1px solid var(--line);border-radius:8px;padding:12px;background:var(--bg);resize:vertical;font-size:14px}
+.status{font-size:13px;color:var(--muted);min-height:1.4em}
+.status.err{color:var(--rec)}
+footer{font-size:12px;color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <div class="meta">
+      <div class="field"><label for="title">會議名稱</label><input id="title" value="" placeholder="例：第三季產品規劃會議"></div>
+      <div class="field"><label for="mdate">日期</label><input id="mdate" type="date"></div>
+      <div class="field"><label for="attendees">與會者</label><input id="attendees" placeholder="王經理、陳工程師、林設計師"></div>
+      <div class="field"><label for="mode">逐字稿模式</label>
+        <select id="mode">
+          <option value="live">即時逐字稿（邊錄邊轉）</option>
+          <option value="later">先錄音，錄完再轉（Gemini）</option>
+        </select></div>
+      <div class="field"><label for="lang">辨識語言</label>
+        <select id="lang">
+          <option value="zh-TW">中文（台灣）</option>
+          <option value="cmn-Hans-CN">中文（簡體）</option>
+          <option value="yue-Hant-HK">粵語</option>
+          <option value="en-US">English</option>
+          <option value="ja-JP">日本語</option>
+        </select></div>
+    </div>
+  </header>
+
+  <div id="support" class="notice" hidden></div>
+
+  <section class="recbar" aria-label="錄音控制">
+    <span class="clock" id="clock">00:00:00</span>
+    <span class="state" id="state"><span class="dot"></span><span id="stateText">待命</span></span>
+    <div class="meter" title="麥克風音量"><i id="level"></i></div>
+    <span class="spacer"></span>
+    <button class="btn primary" id="btnStart">● 開始錄音</button>
+    <button class="btn" id="btnPause" disabled>暫停</button>
+    <button class="btn danger" id="btnStop" disabled>■ 結束</button>
+    <button class="btn" id="btnNew">新會議</button>
+    <button class="btn" id="btnSample">載入範例</button>
+    <button class="btn" id="btnImport">貼上逐字稿</button>
+    <button class="btn" id="btnUpload">上傳錄音檔</button>
+    <input type="file" id="audioFile" accept="audio/*,video/*,.m4a,.mp3,.wav" hidden>
+  </section>
+
+  <section class="panel" id="importBox" hidden aria-label="貼上逐字稿">
+    <div class="sum-body">
+      <label for="importText" style="font-weight:500">把現有的逐字稿貼在下面（每行一句；行首有 [00:01:23] 這類時間會一併保留）</label>
+      <textarea id="importText" style="width:100%;min-height:180px;border:1px solid var(--line);border-radius:8px;padding:10px;background:var(--bg);resize:vertical"></textarea>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn primary" id="btnImportOk">取代目前逐字稿</button>
+        <button class="btn" id="btnImportCancel">取消</button>
+      </div>
+    </div>
+  </section>
+
+  <div class="cols">
+    <section class="panel" aria-label="逐字稿">
+      <div class="panel-head">
+        <h2>逐字稿<span class="count" id="count"></span></h2>
+        <div class="tools">
+          <button class="btn small" id="btnCopyTx">複製</button>
+          <button class="btn small" id="btnDlTx">下載 .txt</button>
+          <button class="btn small" id="btnTranscribe" disabled>用 Gemini 轉逐字稿</button>
+          <button class="btn small" id="btnDlAudio" disabled>下載錄音</button>
+        </div>
+      </div>
+      <div class="txstatus" id="txStatus" hidden></div>
+      <div id="transcript"></div>
+    </section>
+
+    <section class="panel" aria-label="摘要">
+      <div class="panel-head">
+        <h2>會議摘要</h2>
+        <div class="tools">
+          <button class="btn small" id="btnToggleEdit">編輯</button>
+          <button class="btn small" id="btnCopySum">複製</button>
+          <button class="btn small" id="btnDlMd">下載會議記錄 .md</button>
+        </div>
+      </div>
+      <div class="sum-body">
+        <div style="display:flex;flex-wrap:wrap;gap:8px">
+          <button class="btn primary" id="btnGen">用 AI 產生摘要</button>
+          <button class="btn" id="btnCopyPrompt">複製摘要指令（貼到 AI 對話）</button>
+        </div>
+        <details class="cfg" id="cfg">
+          <summary>AI 服務設定（直接在此產生摘要才需要）</summary>
+          <div class="apirow">
+            <div class="field"><label for="provider">服務</label>
+              <select id="provider">
+                <option value="claude">Claude（Anthropic）</option>
+                <option value="gemini">Gemini（Google AI Studio）</option>
+              </select></div>
+            <div class="field"><label for="apikey">API Key</label><input id="apikey" type="password" placeholder="sk-ant-..." autocomplete="off"></div>
+            <div class="field"><label for="model">模型</label><input id="model" value="claude-sonnet-5-5"></div>
+          </div>
+          <p class="hint" style="margin-top:8px">兩種服務的 Key 與模型會分開記住。Key 只存在這台電腦的瀏覽器中，並直接傳給所選服務。沒有 Key 的話，按「複製摘要指令」再貼到 AI 對話即可。</p>
+        </details>
+        <div class="status" id="sumStatus"></div>
+        <div id="summaryView"><p class="hint">結束錄音後按「用 AI 產生摘要」，會整理出：會議摘要、討論重點、決議事項、待辦事項（負責人／期限）、待確認問題。</p></div>
+        <textarea id="summaryEdit" hidden aria-label="編輯摘要（Markdown）"></textarea>
+      </div>
+    </section>
+  </div>
+
+  <footer>即時辨識使用瀏覽器內建的語音服務（Edge 為 Microsoft、Chrome 為 Google），需要連網。錄音檔與逐字稿只保存在本機，下載後才會存成檔案。</footer>
+</div>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const store = {
+    get(k){ try{ return localStorage.getItem('mtg_'+k) }catch(e){ return null } },
+    set(k,v){ try{ localStorage.setItem('mtg_'+k,v) }catch(e){} }
+  };
+
+  // ---------- 狀態 ----------
+  let segs = [];          // {t: 秒, text}
+  let state = 'idle';     // idle | rec | paused
+  let elapsed = 0, startedAt = 0, tick = null;
+  let rec = null, mediaRec = null, chunks = [], stream = null, audioBlob = null;
+  let actx = null, analyser = null, rafId = null;
+  let summaryMd = '';
+
+  // ---------- 模式與提示 ----------
+  const mode = () => $('mode').value;
+  $('mode').value = store.get('mode') || 'live';
+  const geminiKey = () => (store.get('apikey_gemini') || '').trim();
+  function updateNotice(){
+    let msg = '';
+    if (mode() === 'later') {
+      if (!geminiKey()) msg = '先錄音模式會把錄音送到 Gemini 轉成逐字稿，需要 Google AI Studio 的 API Key：請在右側「AI 服務設定」選 Gemini 並填入金鑰。';
+    } else if (!SR) {
+      msg = '這個瀏覽器不支援即時語音辨識。請改用 Microsoft Edge 或 Google Chrome，或把模式切換成「先錄音，錄完再轉」。';
+    } else if (location.protocol === 'file:' && /Chrome/.test(navigator.userAgent) && !/Edg\//.test(navigator.userAgent)) {
+      msg = '提示：Chrome 直接開啟本機檔案時，每次都會詢問麥克風權限，按「允許」即可。中文辨識建議使用 Edge，準確度通常較好。';
+    }
+    $('support').hidden = !msg; $('support').textContent = msg;
+  }
+  $('mode').addEventListener('change', () => { store.set('mode', mode()); updateNotice(); renderTranscript(); });
+
+  // ---------- 初始化欄位 ----------
+  const today = new Date();
+  $('mdate').value = store.get('date') || today.toISOString().slice(0,10);
+  $('title').value = store.get('title') || '';
+  $('attendees').value = store.get('attendees') || '';
+  $('lang').value = store.get('lang') || 'zh-TW';
+  const PROVIDERS = {
+    claude: { model: 'claude-sonnet-5-5', ph: 'sk-ant-...', name: 'Claude' },
+    gemini: { model: 'gemini-3.6-flash', ph: 'AIza...', name: 'Gemini' }
+  };
+  function loadProvider(){
+    const p = $('provider').value, cfg = PROVIDERS[p];
+    $('apikey').value = store.get('apikey_'+p) || (p==='claude' ? store.get('apikey') || '' : '');
+    $('model').value = store.get('model_'+p) || cfg.model;
+    $('apikey').placeholder = cfg.ph;
+  }
+  $('provider').value = store.get('provider') || 'claude';
+  loadProvider();
+  $('provider').addEventListener('change', () => { store.set('provider', $('provider').value); loadProvider(); });
+  $('apikey').addEventListener('input', () => { store.set('apikey_'+$('provider').value, $('apikey').value); updateNotice(); });
+  $('model').addEventListener('input', () => store.set('model_'+$('provider').value, $('model').value));
+  // 範例逐字稿（模擬語音辨識結果，含少量同音錯字）
+  const SAMPLE = {
+    title: '「好好記帳」App 改版上架進度會議',
+    attendees: '王經理（PM）、陳志明（iOS）、林雅婷（Android）、張家豪（後端）、黃怡君（設計）、劉建宏（QA）',
+    segs: [
+      [5,'好那我們開始今天的會議，主要是確認好好記帳三點零改版的上價時程'],
+      [14,'原本預計是十一月十五號上架，但上禮拜測試的時候發現幾個問題，所以今天要決定要不要延期'],
+      [26,'先請建宏報告一下測試的狀況'],
+      [33,'好，目前測試班總共回報了四十七個問題，已經修掉三十一個，剩下十六個'],
+      [45,'其中嚴重等級的有三個，第一個是 iOS 上面同步雲端的時候，資料偶爾會重複'],
+      [58,'第二個是 Android 十四的部分機型，開啟記帳提醒的通知會閃退'],
+      [70,'第三個是匯出 Excel 報表的時候，中文欄位會變成亂碼'],
+      [82,'志明，iOS 同步重複的問題你那邊看起來怎麼樣'],
+      [89,'我查了一下，原因是網路不穩的時候 App 會重送請求，後端沒有做重複檢查'],
+      [101,'這個我覺得前後端都要改，前端加一個請求編號，後端用那個編號判斷是不是重複的'],
+      [113,'家豪你那邊後端改這個大概要多久'],
+      [119,'後端的話大概兩天，可是我要先跟志明對一下請求編號的格式，然後還要補測試'],
+      [131,'所以保守一點抓三個工作天，下禮拜三之前可以上到測試環境'],
+      [143,'好，那雅婷 Android 閃退的部分呢'],
+      [150,'這個是因為 Android 十四改了通知權限的規定，我們沒有先跟使用者要權限就直接排程'],
+      [163,'修法不難，但是要重新設計一個請求權限的畫面，不然使用者會覺得很突兀'],
+      [175,'怡君這個畫面你這禮拜五前可以出嗎'],
+      [180,'可以，我禮拜五給設計稿，不過我想順便問一下，iOS 要不要也用同一個說明畫面，讓兩邊體驗一致'],
+      [194,'我覺得可以，iOS 那邊工作量不大，我可以一起做'],
+      [201,'好那就這樣定，兩個平台用同一套權限說明畫面'],
+      [210,'Excel 亂碼的問題我昨天其實已經修好了，是匯出的時候沒有加 BOM，今天下午會發到測試班'],
+      [224,'太好了，那建宏你下午可以幫忙驗證一下嗎'],
+      [229,'沒問題，我下午就測'],
+      [235,'那我整理一下，三個嚴重問題最慢下禮拜五全部修完，再加上 QA 回歸測試大概要一個禮拜'],
+      [248,'這樣算起來十一月十五號一定來不及，我提議延到十一月二十九號上架，大家覺得呢'],
+      [260,'我同意，不過行銷那邊已經排好十一月十五號的推播跟社群貼文，延期要先通知他們'],
+      [272,'這個我今天會去跟行銷的 Amy 說，請她把活動往後挪兩個禮拜'],
+      [283,'另外有一件事要確認，Apple 審核最近好像比較慢，二十九號上架的話我們最晚什麼時候要送審'],
+      [296,'依照之前的經驗大概要抓三到五天，所以最晚二十四號要送出去'],
+      [305,'那就把送審日訂在十一月二十四號，Google Play 也同一天送'],
+      [315,'還有一個比較小的問題，剩下那十三個非嚴重的問題要不要這次一起修'],
+      [326,'我的建議是挑影響使用者比較多的先修，其他的放到三點零點一'],
+      [337,'建宏你可以先幫忙把那十三個依照影響程度排一下嗎，明天中午前給我'],
+      [345,'好，明天中午前會整理好放在共用文件上'],
+      [353,'對了，關於訂閱方案的價格要不要這次一起調，上次老闆有提到想從每個月六十塊調到七十五塊'],
+      [366,'這個我還沒拿到正式的決定，可能要等下禮拜一的主管會議，今天先不討論'],
+      [377,'好，那我們今天的結論就是延到十一月二十九號上架，二十四號送審'],
+      [387,'下禮拜三下午兩點再開一次會確認修正進度，大家辛苦了'],
+    ]
+  };
+  function loadSample(){
+    segs = SAMPLE.segs.map(([t,text]) => ({ t, text }));
+    elapsed = SAMPLE.segs[SAMPLE.segs.length-1][0] + 8;
+    $('title').value = SAMPLE.title; store.set('title', SAMPLE.title);
+    $('attendees').value = SAMPLE.attendees; store.set('attendees', SAMPLE.attendees);
+    summaryMd = ''; store.set('summary','');
+    store.set('segs', JSON.stringify(segs));
+  }
+
+  const savedSegs = store.get('segs');
+  try { segs = JSON.parse(savedSegs || '[]') } catch(e) { segs = [] }
+  summaryMd = store.get('summary') || '';
+  elapsed = segs.length ? segs[segs.length-1].t : 0;
+  if (savedSegs === null) loadSample();   // 第一次開啟：預設放入範例
+
+  ['title','attendees','mdate','lang'].forEach(id =>
+    $(id).addEventListener('input', () => store.set(id==='mdate'?'date':id, $(id).value)));
+  const saveSegs = () => store.set('segs', JSON.stringify(segs));
+
+  // ---------- 時間 ----------
+  const fmt = s => { s = Math.floor(s); const h=String(Math.floor(s/3600)).padStart(2,'0'), m=String(Math.floor(s%3600/60)).padStart(2,'0'), ss=String(s%60).padStart(2,'0'); return `${h}:${m}:${ss}` };
+  const now = () => state === 'rec' ? elapsed + (Date.now()-startedAt)/1000 : elapsed;
+  const renderClock = () => $('clock').textContent = fmt(now());
+
+  // ---------- 逐字稿顯示 ----------
+  let interimEl = null;
+  function renderTranscript(){
+    const box = $('transcript');
+    box.innerHTML = '';
+    if (state !== 'idle' && mode() === 'later') {
+      txMsg('錄音中。結束後會自動把錄音送到 Gemini 轉成逐字稿。');
+    } else if (!transcribing) txMsg('');
+    if (!segs.length && state === 'idle') {
+      box.innerHTML = mode() === 'later'
+        ? '<div class="empty"><strong>按「開始錄音」，結束後會自動轉成逐字稿</strong>也可以按「上傳錄音檔」，轉寫手機或其他軟體錄好的會議錄音。</div>'
+        : '<div class="empty"><strong>按「開始錄音」後，逐字稿會即時出現在這裡</strong>每一句都會標上時間，可直接點文字修正錯字。</div>';
+    }
+    segs.forEach((s,i) => box.appendChild(segEl(s,i)));
+    interimEl = document.createElement('div');
+    interimEl.className = 'interim';
+    box.appendChild(interimEl);
+    $('count').textContent = segs.length ? `${segs.length} 句・${segs.reduce((a,s)=>a+s.text.length,0)} 字` : '';
+  }
+  function segEl(s,i){
+    const row = document.createElement('div'); row.className='seg';
+    const t = document.createElement('time'); t.textContent = fmt(s.t);
+    const tx = document.createElement('div'); tx.className='txt'; tx.contentEditable='true'; tx.spellcheck=false; tx.textContent = s.text;
+    tx.addEventListener('input', () => { segs[i].text = tx.textContent; saveSegs(); });
+    const del = document.createElement('button'); del.className='del'; del.textContent='刪除'; del.title='刪除這一句';
+    del.addEventListener('click', () => { segs.splice(i,1); saveSegs(); renderTranscript(); });
+    row.append(t,tx,del); return row;
+  }
+  function addSeg(text){
+    text = text.trim(); if (!text) return;
+    const s = { t: Math.max(0, now() - 2), text };
+    segs.push(s); saveSegs();
+    const box = $('transcript');
+    const empty = box.querySelector('.empty'); if (empty) empty.remove();
+    const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+    box.insertBefore(segEl(s, segs.length-1), interimEl);
+    $('count').textContent = `${segs.length} 句・${segs.reduce((a,x)=>a+x.text.length,0)} 字`;
+    if (nearBottom) box.scrollTop = box.scrollHeight;
+  }
+
+  // ---------- 語音辨識 ----------
+  function startRecognition(){
+    if (!SR || mode() === 'later') return;
+    rec = new SR();
+    rec.lang = $('lang').value;
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.onresult = e => {
+      let interim = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const r = e.results[i];
+        if (r.isFinal) addSeg(r[0].transcript); else interim += r[0].transcript;
+      }
+      interimEl.textContent = interim;
+      if (interim) { const b=$('transcript'); if (b.scrollHeight-b.scrollTop-b.clientHeight<80) b.scrollTop=b.scrollHeight; }
+    };
+    rec.onerror = e => {
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+        showSupport('無法使用語音辨識：麥克風權限被拒絕，或瀏覽器的語音服務無法連線。請檢查網址列左側的麥克風權限。');
+      } else if (e.error === 'network') {
+        showSupport('語音辨識需要連網，目前連線失敗；錄音仍在繼續，恢復連線後會自動接上。');
+      }
+    };
+    rec.onend = () => { if (state === 'rec') { setTimeout(() => { try { rec.start() } catch(e){} }, 250) } };
+    try { rec.start() } catch(e){}
+  }
+  function stopRecognition(){ if (rec) { const r = rec; rec = null; r.onend = null; try { r.stop() } catch(e){} } if (interimEl) interimEl.textContent=''; }
+  function showSupport(msg){ $('support').hidden=false; $('support').textContent=msg; }
+
+  // ---------- 音量表 ----------
+  function startMeter(){
+    try {
+      actx = new (window.AudioContext||window.webkitAudioContext)();
+      const src = actx.createMediaStreamSource(stream);
+      analyser = actx.createAnalyser(); analyser.fftSize = 512; src.connect(analyser);
+      const buf = new Uint8Array(analyser.fftSize);
+      const loop = () => {
+        analyser.getByteTimeDomainData(buf);
+        let sum=0; for (const v of buf){ const d=(v-128)/128; sum+=d*d }
+        const rms = Math.sqrt(sum/buf.length);
+        $('level').style.width = (state==='rec' ? Math.min(100, rms*400) : 0) + '%';
+        rafId = requestAnimationFrame(loop);
+      };
+      loop();
+    } catch(e){}
+  }
+  function stopMeter(){ cancelAnimationFrame(rafId); $('level').style.width='0'; if (actx) { actx.close().catch(()=>{}); actx=null } }
+
+  // ---------- 控制 ----------
+  function setState(s){
+    state = s;
+    const st = $('state');
+    st.classList.toggle('rec', s==='rec');
+    $('stateText').textContent = s==='rec' ? '錄音中' : s==='paused' ? '已暫停' : '待命';
+    $('btnStart').disabled = s !== 'idle';
+    $('btnPause').disabled = s === 'idle';
+    $('btnPause').textContent = s === 'paused' ? '繼續' : '暫停';
+    $('btnStop').disabled = s === 'idle';
+    $('lang').disabled = s !== 'idle';
+    $('btnNew').disabled = s !== 'idle';
+    $('btnSample').disabled = s !== 'idle';
+    $('btnImport').disabled = s !== 'idle';
+    $('btnUpload').disabled = s !== 'idle' || transcribing;
+    $('mode').disabled = s !== 'idle';
+    $('btnTranscribe').disabled = s !== 'idle' || !audioBlob || transcribing;
+  }
+
+  // 錄音時保持螢幕不休眠（手機適用，不支援就略過）
+  let wakeLock = null;
+  async function keepAwake(on){
+    try {
+      if (on && 'wakeLock' in navigator && !wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => wakeLock = null); }
+      if (!on && wakeLock) { await wakeLock.release(); wakeLock = null; }
+    } catch(e) { wakeLock = null }
+  }
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && state !== 'idle') keepAwake(true) });
+
+  $('btnStart').addEventListener('click', async () => {
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation:true, noiseSuppression:true } });
+    } catch(e) {
+      showSupport('無法取得麥克風：請允許瀏覽器使用麥克風，並確認裝置已連接。');
+      return;
+    }
+    const laterMode = mode() === 'later';
+    if (laterMode) elapsed = 0;   // 錄完再轉：時間軸從錄音開頭算起
+    chunks = []; audioBlob = null; $('btnDlAudio').disabled = true;
+    try {
+      const mime = ['audio/webm;codecs=opus','audio/webm','audio/mp4','audio/ogg'].find(m => window.MediaRecorder && MediaRecorder.isTypeSupported(m));
+      const opts = { audioBitsPerSecond: 32000 };   // 約每小時 14 MB，語音足夠清楚
+      if (mime) opts.mimeType = mime;
+      try { mediaRec = new MediaRecorder(stream, opts) } catch(_) { mediaRec = new MediaRecorder(stream) }
+      mediaRec.ondataavailable = e => { if (e.data.size) chunks.push(e.data) };
+      mediaRec.onstop = () => {
+        audioBlob = new Blob(chunks, { type: mediaRec.mimeType || mime || 'audio/webm' });
+        $('btnDlAudio').disabled = false; setState('idle');
+        if (laterMode) transcribeAudio(audioBlob);
+      };
+      mediaRec.start(1000);
+    } catch(e) {
+      mediaRec = null;
+      if (laterMode) { stream.getTracks().forEach(t => t.stop()); showSupport('這個瀏覽器無法錄音，請改用 Edge、Chrome 或 Safari。'); return; }
+    }
+    keepAwake(true);
+    startedAt = Date.now();
+    setState('rec');
+    renderTranscript();
+    startRecognition();
+    startMeter();
+    tick = setInterval(renderClock, 250);
+  });
+
+  $('btnPause').addEventListener('click', () => {
+    if (state === 'rec') {
+      elapsed = now(); setState('paused');
+      stopRecognition();
+      if (mediaRec && mediaRec.state === 'recording') mediaRec.pause();
+    } else if (state === 'paused') {
+      startedAt = Date.now(); setState('rec');
+      if (mediaRec && mediaRec.state === 'paused') mediaRec.resume();
+      startRecognition();
+    }
+    renderClock();
+  });
+
+  $('btnStop').addEventListener('click', () => {
+    if (state === 'rec') elapsed = now();
+    setState('idle');
+    stopRecognition();
+    if (mediaRec && mediaRec.state !== 'inactive') mediaRec.stop();
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    stopMeter(); clearInterval(tick); renderClock(); keepAwake(false);
+    if (mode() === 'later') { renderTranscript(); return; }
+    $('sumStatus').textContent = segs.length ? '錄音已結束，可以產生摘要了。' : '';
+    $('sumStatus').className = 'status';
+  });
+
+  // ---------- 錄完再轉：Gemini 音訊轉寫 ----------
+  let transcribing = false;
+  function txMsg(msg, kind){
+    const el = $('txStatus');
+    if (!msg) { el.hidden = true; el.innerHTML = ''; return; }
+    el.hidden = false; el.className = 'txstatus' + (kind === 'err' ? ' err' : '');
+    el.innerHTML = (kind === 'busy' ? '<span class="spin"></span>' : '') + '<span></span>';
+    el.lastChild.textContent = msg;
+  }
+  const GEM = 'https://generativelanguage.googleapis.com';
+  function audioMime(blob){
+    let t = (blob.type || '').split(';')[0].toLowerCase();
+    const name = (blob.name || '').toLowerCase();
+    if (!t) t = name.endsWith('.mp3') ? 'audio/mpeg' : name.endsWith('.wav') ? 'audio/wav' : name.endsWith('.m4a') ? 'audio/m4a' : name.endsWith('.ogg') ? 'audio/ogg' : 'audio/webm';
+    if (t === 'audio/mp4' || t === 'audio/x-m4a') t = 'audio/m4a';
+    if (t === 'audio/x-wav' || t === 'audio/wave') t = 'audio/wav';
+    if (t === 'audio/mp3') t = 'audio/mpeg';
+    return t;
+  }
+  const toBase64 = blob => new Promise((ok, fail) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(',')[1]); r.onerror = () => fail(new Error('讀取錄音檔失敗')); r.readAsDataURL(blob); });
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+  async function uploadToGemini(blob, mime, key, onStep){
+    onStep('正在上傳錄音檔到 Gemini…');
+    const start = await fetch(GEM + '/upload/v1beta/files', {
+      method: 'POST',
+      headers: { 'x-goog-api-key': key, 'X-Goog-Upload-Protocol': 'resumable', 'X-Goog-Upload-Command': 'start',
+        'X-Goog-Upload-Header-Content-Length': String(blob.size), 'X-Goog-Upload-Header-Content-Type': mime, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file: { display_name: 'meeting-audio' } })
+    });
+    if (!start.ok) { const d = await start.json().catch(() => ({})); throw new Error(d?.error?.message || '上傳失敗（HTTP ' + start.status + '）'); }
+    const url = start.headers.get('x-goog-upload-url');
+    if (!url) throw new Error('瀏覽器擋下了大檔上傳，請改用 20 MB 以下的錄音檔');
+    const up = await fetch(url, { method: 'POST', headers: { 'X-Goog-Upload-Offset': '0', 'X-Goog-Upload-Command': 'upload, finalize' }, body: blob });
+    const j = await up.json().catch(() => ({}));
+    if (!up.ok || !j.file) throw new Error(j?.error?.message || '上傳失敗（HTTP ' + up.status + '）');
+    let file = j.file;
+    for (let i = 0; file.state === 'PROCESSING' && i < 100; i++) {
+      onStep('Gemini 正在處理錄音檔…');
+      await sleep(3000);
+      const r = await fetch(GEM + '/v1beta/' + file.name, { headers: { 'x-goog-api-key': key } });
+      file = await r.json();
+    }
+    if (file.state !== 'ACTIVE') throw new Error('Gemini 無法處理這個錄音檔');
+    return { file_data: { mime_type: file.mimeType || mime, file_uri: file.uri } };
+  }
+
+  function transcribePrompt(){
+    const lang = $('lang').value;
+    const langNote = lang === 'cmn-Hans-CN' ? '中文請使用简体字。' : lang === 'en-US' ? 'Transcribe English speech in English.' : lang === 'ja-JP' ? '日本語の発言は日本語で書き起こしてください。' : '中文請使用繁體字（台灣用語）；夾雜的英文保留原文。';
+    const who = $('attendees').value.trim();
+    return `請把這段會議錄音完整轉寫成逐字稿。
+規則：
+1. 逐句輸出，每行一句，格式固定為：[HH:MM:SS] 說話者：內容
+2. 時間是該句在錄音中開始的時間。
+3. 依聲音區分不同說話者，標示為「說話者A」「說話者B」…；若從對話內容能確定是誰，可直接用姓名或稱謂。${who ? '\n   與會者名單供參考：' + who : ''}
+4. 忠實轉寫，不要摘要、不要省略、不要潤飾；去掉「嗯」「呃」等無意義的語助詞即可。聽不清楚的地方寫（聽不清）。
+5. ${langNote}
+6. 只輸出逐字稿本身，不要加標題、說明或 Markdown 符號。`;
+  }
+
+  async function transcribeAudio(blob){
+    if (!blob || transcribing) return;
+    const key = geminiKey();
+    if (!key) {
+      txMsg('需要 Gemini API Key 才能轉逐字稿。請在右側「AI 服務設定」選 Gemini 並填入金鑰，再按「用 Gemini 轉逐字稿」。', 'err');
+      $('cfg').open = true; $('provider').value = 'gemini'; $('provider').dispatchEvent(new Event('change'));
+      setState(state); return;
+    }
+    const model = (store.get('model_gemini') || PROVIDERS.gemini.model).trim();
+    transcribing = true; setState(state);
+    const t0 = Date.now(); let step = '準備中…';
+    const timer = setInterval(() => txMsg(`${step}（已等待 ${Math.round((Date.now()-t0)/1000)} 秒，一小時的錄音約需 1–3 分鐘）`, 'busy'), 1000);
+    const onStep = s => { step = s; txMsg(`${step}（已等待 ${Math.round((Date.now()-t0)/1000)} 秒）`, 'busy'); };
+    try {
+      const mime = audioMime(blob);
+      let part;
+      if (blob.size < 14 * 1024 * 1024) { onStep('正在讀取錄音檔…'); part = { inline_data: { mime_type: mime, data: await toBase64(blob) } }; }
+      else part = await uploadToGemini(blob, mime, key, onStep);
+      onStep(`Gemini（${model}）正在轉寫逐字稿…`);
+      const res = await fetch(`${GEM}/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
+        body: JSON.stringify({ contents: [{ role: 'user', parts: [part, { text: transcribePrompt() }] }], generationConfig: { maxOutputTokens: 65536, temperature: 0.2 } })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error?.message || ('HTTP ' + res.status));
+      const cand = (data.candidates || [])[0];
+      const text = (cand?.content?.parts || []).map(p => p.text || '').join('').trim();
+      if (!text) throw new Error(data?.promptFeedback?.blockReason ? '內容被安全過濾擋下' : '模型沒有回傳內容，可能是錄音中沒有可辨識的語音');
+      const parsed = parseLines(text);
+      if (!parsed.length) throw new Error('沒有轉出任何文字');
+      segs = parsed; saveSegs();
+      elapsed = Math.max(elapsed, parsed[parsed.length-1].t);
+      summaryMd = ''; store.set('summary', ''); renderSummary();
+      transcribing = false; renderClock(); renderTranscript();
+      const partial = cand?.finishReason === 'MAX_TOKENS';
+      txMsg(partial ? `轉寫完成 ${parsed.length} 句，但錄音太長，結尾部分可能被截斷。` : `轉寫完成，共 ${parsed.length} 句。可以點文字修正，再按「用 AI 產生摘要」。`, partial ? 'err' : '');
+      status('逐字稿已完成，可以產生摘要了。');
+    } catch(e) {
+      transcribing = false;
+      txMsg('轉逐字稿失敗：' + e.message + '。錄音仍保留著，可以按「下載錄音」存檔，或稍後再按「用 Gemini 轉逐字稿」重試。', 'err');
+    } finally {
+      clearInterval(timer); transcribing = false; setState(state);
+    }
+  }
+
+  $('btnTranscribe').addEventListener('click', () => transcribeAudio(audioBlob));
+  $('btnUpload').addEventListener('click', () => $('audioFile').click());
+  $('audioFile').addEventListener('change', () => {
+    const f = $('audioFile').files[0]; $('audioFile').value = '';
+    if (!f) return;
+    audioBlob = f; elapsed = 0; segs = []; renderClock(); renderTranscript();
+    $('btnDlAudio').disabled = false;
+    transcribeAudio(f);
+  });
+
+  // 新會議：兩段式確認
+  let newArmed = null;
+  $('btnNew').addEventListener('click', () => {
+    if (!segs.length && !summaryMd) return reset();
+    if (newArmed) { clearTimeout(newArmed); newArmed=null; $('btnNew').textContent='新會議'; return reset(); }
+    $('btnNew').textContent = '再按一次清除目前內容';
+    newArmed = setTimeout(() => { newArmed=null; $('btnNew').textContent='新會議' }, 3500);
+  });
+  // 把「[00:01:23] 內容」格式的文字拆成逐字稿；沒有時間的行每句往後推 8 秒
+  function parseLines(text){
+    let last = 0;
+    return text.split(/\r?\n/).map(l => l.trim()).filter(l => l && !l.startsWith('```')).map(l => {
+      const m = l.match(/^\**\[?(\d{1,2}):(\d{2})(?::(\d{2}))?\]?\**\s*[-–:：]?\s*(.*)$/);
+      if (m && m[4]) { const t = m[3] !== undefined ? (+m[1])*3600 + (+m[2])*60 + (+m[3]) : (+m[1])*60 + (+m[2]); last = t; return { t, text: m[4] } }
+      last += 8; return { t: last, text: l };
+    });
+  }
+
+  $('btnSample').addEventListener('click', () => {
+    loadSample(); renderClock(); renderTranscript(); renderSummary();
+    status('已載入範例逐字稿，按「用 AI 產生摘要」測試整理效果。');
+  });
+  $('btnImport').addEventListener('click', () => { $('importBox').hidden = !$('importBox').hidden; if (!$('importBox').hidden) $('importText').focus(); });
+  $('btnImportCancel').addEventListener('click', () => { $('importBox').hidden = true });
+  $('btnImportOk').addEventListener('click', () => {
+    const parsed = parseLines($('importText').value);
+    if (!parsed.length) return;
+    segs = parsed;
+    elapsed = parsed[parsed.length-1].t; summaryMd = ''; store.set('summary','');
+    saveSegs(); $('importBox').hidden = true; $('importText').value = '';
+    renderClock(); renderTranscript(); renderSummary();
+    status(`已匯入 ${segs.length} 句，按「用 AI 產生摘要」開始整理。`);
+  });
+
+  function reset(){
+    segs = []; saveSegs(); elapsed = 0; audioBlob = null; summaryMd = ''; store.set('summary','');
+    $('title').value=''; store.set('title','');
+    $('mdate').value = new Date().toISOString().slice(0,10); store.set('date',$('mdate').value);
+    $('btnDlAudio').disabled = true; $('btnNew').textContent='新會議';
+    renderClock(); renderTranscript(); renderSummary();
+    $('sumStatus').textContent='';
+  }
+
+  // ---------- 匯出 ----------
+  const safeName = () => (($('title').value.trim() || '會議') + '_' + $('mdate').value).replace(/[\\/:*?"<>|]/g,'_');
+  const transcriptText = () => segs.map(s => `[${fmt(s.t)}] ${s.text}`).join('\n');
+  function download(name, blob){
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
+    document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove() }, 2000);
+  }
+  async function copy(text, btn){
+    const old = btn.textContent;
+    try { await navigator.clipboard.writeText(text); btn.textContent='已複製' }
+    catch(e){
+      const ta=document.createElement('textarea'); ta.value=text; document.body.appendChild(ta); ta.select();
+      try{ document.execCommand('copy'); btn.textContent='已複製' }catch(_){ btn.textContent='複製失敗' } ta.remove();
+    }
+    setTimeout(()=>btn.textContent=old,1500);
+  }
+  const header = () => `會議名稱：${$('title').value||'（未命名）'}\n日期：${$('mdate').value}\n與會者：${$('attendees').value||'（未填）'}\n`;
+
+  $('btnCopyTx').addEventListener('click', e => copy(transcriptText(), e.currentTarget));
+  $('btnDlTx').addEventListener('click', () => download(safeName()+'_逐字稿.txt', new Blob(['﻿'+header()+'\n'+transcriptText()], {type:'text/plain;charset=utf-8'})));
+  $('btnDlAudio').addEventListener('click', () => { if (audioBlob) download(safeName()+'_錄音.'+(audioBlob.type.includes('ogg')?'ogg':'webm'), audioBlob) });
+
+  // ---------- 摘要 ----------
+  function buildPrompt(){
+    return `你是專業的會議記錄秘書。請根據以下會議逐字稿，用繁體中文整理成正式的會議記錄。
+逐字稿由語音辨識產生，可能有錯字、同音字或斷句錯誤，請依上下文合理理解，但不要捏造逐字稿中沒有的內容。
+
+請用 Markdown 輸出，依序包含以下段落：
+## 會議摘要
+（3–5 句說明會議目的與整體結論）
+## 討論重點
+（依主題分組的條列重點，必要時附上時間點）
+## 決議事項
+（已確定的決定；若沒有請寫「無明確決議」）
+## 待辦事項
+（每項格式：- 事項 ｜ 負責人 ｜ 期限；逐字稿未提到負責人或期限就寫「未指定」）
+## 待確認問題
+（仍未解決、需後續追蹤的問題）
+
+${header()}
+=== 逐字稿開始 ===
+${transcriptText()}
+=== 逐字稿結束 ===`;
+  }
+
+  $('btnCopyPrompt').addEventListener('click', e => {
+    if (!segs.length) return status('目前還沒有逐字稿內容。', true);
+    copy(buildPrompt(), e.currentTarget);
+    status('已複製。打開 Claude 對話貼上送出，就會得到整理好的會議記錄。');
+  });
+
+  function status(msg, err){ $('sumStatus').textContent = msg; $('sumStatus').className = 'status' + (err?' err':''); }
+
+  $('btnGen').addEventListener('click', async () => {
+    if (!segs.length) return status('目前還沒有逐字稿內容。', true);
+    const provider = $('provider').value, cfg = PROVIDERS[provider];
+    const key = $('apikey').value.trim();
+    const model = $('model').value.trim() || cfg.model;
+    if (!key) { $('cfg').open = true; $('apikey').focus(); return status(`請先在設定中填入 ${cfg.name} API Key，或改用「複製摘要指令」貼到 AI 對話。`, true); }
+    const btn = $('btnGen'); btn.disabled = true; status(`正在用 ${cfg.name} 產生摘要…`);
+    try {
+      let text = '';
+      if (provider === 'gemini') {
+        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
+          body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: buildPrompt() }] }], generationConfig: { maxOutputTokens: 8000 } })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data?.error?.message || ('HTTP ' + res.status));
+        const cand = (data.candidates || [])[0];
+        text = (cand?.content?.parts || []).map(p => p.text || '').join('').trim();
+        if (!text) throw new Error(data?.promptFeedback?.blockReason ? '內容被安全過濾擋下（' + data.promptFeedback.blockReason + '）' : '模型沒有回傳內容');
+      } else {
+        const res = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-api-key': key,
+            'anthropic-version': '2023-06-01',
+            'anthropic-dangerous-direct-browser-access': 'true'
+          },
+          body: JSON.stringify({ model, max_tokens: 4000, messages: [{ role: 'user', content: buildPrompt() }] })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data?.error?.message || ('HTTP ' + res.status));
+        text = (data.content || []).filter(c => c.type === 'text').map(c => c.text).join('\n').trim();
+      }
+      summaryMd = text;
+      store.set('summary', summaryMd); renderSummary();
+      status('摘要已產生，可以按「編輯」修改內容。');
+    } catch(e) {
+      status('產生失敗：' + e.message + '。請確認 API Key 與模型名稱是否正確、網路是否連線。', true);
+    } finally { btn.disabled = false }
+  });
+
+  // 簡易 Markdown 轉換
+  function md(src){
+    const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const inline = s => esc(s).replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>').replace(/`(.+?)`/g,'<code>$1</code>');
+    let html = '', inList = false;
+    for (const raw of src.split('\n')) {
+      const line = raw.trimEnd();
+      const h = line.match(/^(#{1,4})\s+(.*)/);
+      const li = line.match(/^\s*(?:[-*]|\d+\.)\s+(.*)/);
+      if (li) { if (!inList) { html += '<ul>'; inList = true } html += '<li>' + inline(li[1]) + '</li>'; continue }
+      if (inList) { html += '</ul>'; inList = false }
+      if (h) html += `<h${Math.min(3,h[1].length+1)}>${inline(h[2])}</h${Math.min(3,h[1].length+1)}>`;
+      else if (line.trim()) html += '<p>' + inline(line) + '</p>';
+    }
+    if (inList) html += '</ul>';
+    return html;
+  }
+  function renderSummary(){
+    if (summaryMd) $('summaryView').innerHTML = md(summaryMd);
+    else $('summaryView').innerHTML = '<p class="hint">結束錄音後按「用 AI 產生摘要」，會整理出：會議摘要、討論重點、決議事項、待辦事項（負責人／期限）、待確認問題。</p>';
+  }
+  let editing = false;
+  $('btnToggleEdit').addEventListener('click', () => {
+    editing = !editing;
+    if (editing) { $('summaryEdit').value = summaryMd; $('summaryEdit').hidden = false; $('summaryView').hidden = true; $('btnToggleEdit').textContent = '完成'; $('summaryEdit').focus(); }
+    else { summaryMd = $('summaryEdit').value; store.set('summary', summaryMd); $('summaryEdit').hidden = true; $('summaryView').hidden = false; $('btnToggleEdit').textContent = '編輯'; renderSummary(); }
+  });
+  $('summaryEdit').addEventListener('input', () => { summaryMd = $('summaryEdit').value; store.set('summary', summaryMd) });
+  $('btnCopySum').addEventListener('click', e => copy(summaryMd || '', e.currentTarget));
+  $('btnDlMd').addEventListener('click', () => {
+    const doc = `# ${$('title').value || '會議記錄'}\n\n- 日期：${$('mdate').value}\n- 與會者：${$('attendees').value || '（未填）'}\n- 會議長度：${fmt(elapsed)}\n\n${summaryMd || '（尚未產生摘要）'}\n\n---\n\n## 附錄：逐字稿\n\n${segs.map(s => `**[${fmt(s.t)}]** ${s.text}  `).join('\n')}\n`;
+    download(safeName() + '_會議記錄.md', new Blob(['﻿' + doc], {type:'text/markdown;charset=utf-8'}));
+  });
+
+  window.addEventListener('beforeunload', e => { if (state !== 'idle') { e.preventDefault(); e.returnValue = '' } });
+
+  setState('idle'); renderClock(); renderTranscript(); renderSummary(); updateNotice();
+})();
+</script>
+</body>
+</html>
